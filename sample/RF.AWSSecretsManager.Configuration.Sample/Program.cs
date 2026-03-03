@@ -16,8 +16,6 @@ var bootstrapConfig = new ConfigurationBuilder()
 var secretName = bootstrapConfig["AWSSecretsManager:SecretName"]
     ?? Environment.GetEnvironmentVariable("AWS_SAMPLE_SECRET_NAME");
 
-Console.WriteLine($"[DEBUG] SecretName from config/env: '{secretName}'");
-
 if (string.IsNullOrWhiteSpace(secretName))
 {
     Console.WriteLine("AWS Secrets Manager sample");

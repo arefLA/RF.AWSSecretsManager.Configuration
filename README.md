@@ -9,8 +9,10 @@ It allows you to load a JSON secret from AWS Secrets Manager and expose it as st
 Using the .NET CLI:
 
 ```bash
-dotnet add package RF.AWSSecretsManager.Configuration --version 1.0.0
+dotnet add package RF.AWSSecretsManager.Configuration --version 1.1.0
 ```
+
+**Supported target frameworks:** `net8.0` and `net10.0`.
 
 ### Secret JSON Format
 
@@ -91,24 +93,43 @@ var configuration = new ConfigurationBuilder()
 
 The provider will **not dispose** the client in this case.
 
-**Using AWSOptions or DI (e.g. ASP.NET Core)**  
-If your app uses [AWSSDK.Extensions.NETCore.Setup](https://www.nuget.org/packages/AWSSDK.Extensions.NETCore.Setup/) and configures AWS via `AWSOptions` (e.g. from `appsettings.json` or environment), create the client from those options and pass it in. The package does not take `AWSOptions` directly (to avoid an extra dependency); you build the client and use the custom-client overload:
+**Using a specific region or AWSOptions (e.g. ASP.NET Core)**  
+This package does not take `AWSOptions` directly (to avoid an extra dependency). Build an `IAmazonSecretsManager` yourself and pass it to the custom-client overload. The package targets `net8.0` and `net10.0`, so it can be consumed by any .NET 8 or later application.
+
+> **Note:** Do **not** use `GetAWSOptions().CreateServiceClient<IAmazonSecretsManager>()` from AWSSDK.Extensions.NETCore.Setup. That API is incompatible with `IAmazonSecretsManager` on .NET 10 (and with newer AWS SDK versions) due to static abstract interface members. Create the client explicitly instead.
+
+**Option 1 – Region from config, credentials from default chain**
 
 ```csharp
+using Amazon;
 using Amazon.SecretsManager;
 using Microsoft.Extensions.Configuration;
 using RF.AWSSecretsManager.Configuration;
 
-// If using AWSSDK.Extensions.NETCore.Setup and AddDefaultAWSOptions / GetAWSOptions():
-var awsOptions = configuration.GetAWSOptions();  // or from builder.Configuration in host apps
-IAmazonSecretsManager client = awsOptions.CreateServiceClient<IAmazonSecretsManager>();
+var regionName = configuration["AWS:Region"];  // e.g. "us-east-1" from appsettings or env
+var region = !string.IsNullOrWhiteSpace(regionName)
+    ? RegionEndpoint.GetBySystemName(regionName.Trim())
+    : null;
+
+IAmazonSecretsManager? client = region != null
+    ? new AmazonSecretsManagerClient(region)
+    : null;  // null = provider uses default SDK client and region
 
 var config = new ConfigurationBuilder()
     .AddAWSSecretsManager("my/secret/name", client)
     .Build();
 ```
 
-In ASP.NET Core with DI, you can register the client and use it when building configuration (e.g. in a pre-built service provider), or resolve `IAmazonSecretsManager` from the host and pass it into `AddAWSSecretsManager` as above. A future version may add an overload that accepts `AWSOptions` and creates the client inside the package (see Roadmap).
+**Option 2 – Fixed region in code**
+
+```csharp
+IAmazonSecretsManager client = new AmazonSecretsManagerClient(RegionEndpoint.USEast1);
+var config = new ConfigurationBuilder()
+    .AddAWSSecretsManager("my/secret/name", client)
+    .Build();
+```
+
+Credentials always use the default AWS SDK chain (environment variables, shared credentials file, IAM role, etc.). In ASP.NET Core with DI, register `IAmazonSecretsManager` (e.g. create the client from your config as above and register it as a singleton) and pass the resolved client into `AddAWSSecretsManager`. A future version may add an overload that accepts `AWSOptions` and creates the client inside the package (see Roadmap).
 
 #### 3. Logger overload
 

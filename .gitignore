@@ -1,0 +1,39 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+
+# IDE / Rider
+.idea/
+*.iml
+*.sln.docstates
+
+# macOS
+.DS_Store
+
+# User-specific and local
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+*.rsuser
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/build/
+
+# Test / coverage
+[Tt]est[Rr]esult*/
+[Cc]overage/
+*.VisualState.xml
+*.coverage
+*.coveragexml
+
+# Rider
+*.sln.iml

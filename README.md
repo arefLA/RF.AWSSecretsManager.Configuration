@@ -9,8 +9,10 @@ It allows you to load a JSON secret from AWS Secrets Manager and expose it as st
 Using the .NET CLI:
 
 ```bash
-dotnet add package RF.AWSSecretsManager.Configuration --version 1.0.0
+dotnet add package RF.AWSSecretsManager.Configuration --version 1.1.0
 ```
+
+**Supported target frameworks:** `net8.0` and `net10.0`.
 
 ### Secret JSON Format
 
@@ -92,7 +94,7 @@ var configuration = new ConfigurationBuilder()
 The provider will **not dispose** the client in this case.
 
 **Using a specific region or AWSOptions (e.g. ASP.NET Core)**  
-This package does not take `AWSOptions` directly (to avoid an extra dependency). Build an `IAmazonSecretsManager` yourself and pass it to the custom-client overload. The package targets `net6.0`, so it can be consumed by any .NET 6 or later application (including .NET 10).
+This package does not take `AWSOptions` directly (to avoid an extra dependency). Build an `IAmazonSecretsManager` yourself and pass it to the custom-client overload. The package targets `net8.0` and `net10.0`, so it can be consumed by any .NET 8 or later application.
 
 > **Note:** Do **not** use `GetAWSOptions().CreateServiceClient<IAmazonSecretsManager>()` from AWSSDK.Extensions.NETCore.Setup. That API is incompatible with `IAmazonSecretsManager` on .NET 10 (and with newer AWS SDK versions) due to static abstract interface members. Create the client explicitly instead.
 

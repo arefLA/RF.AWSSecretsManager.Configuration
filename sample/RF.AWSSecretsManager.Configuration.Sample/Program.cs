@@ -53,16 +53,17 @@ using var loggerFactory = LoggerFactory.Create(builder =>
 var logger = loggerFactory.CreateLogger("Sample");
 
 // Build configuration with appsettings.json and AWS Secrets Manager.
-// Using the ILoggerFactory overload so the provider logs with a dedicated category (DI-friendly).
+// Everything is set on the options. The ILoggerFactory makes the provider log with a dedicated
+// category (DI-friendly). No client is set, so the default AWS SDK client is used.
 var configurationBuilder = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: true)
-    .AddAWSSecretsManager(
-        secretName,
-        client: null,
-        configure: options => options.MaskSecretNameInLogs = true,
-        logger: null,
-        loggerFactory: loggerFactory,
-        loggerCategoryName: "Sample.AwsSecrets");
+    .AddAWSSecretsManager(options =>
+    {
+        options.SecretName = secretName;
+        options.MaskSecretNameInLogs = true;
+        options.LoggerFactory = loggerFactory;
+        options.LoggerCategoryName = "Sample.AwsSecrets";
+    });
 
 var configuration = configurationBuilder.Build();
 

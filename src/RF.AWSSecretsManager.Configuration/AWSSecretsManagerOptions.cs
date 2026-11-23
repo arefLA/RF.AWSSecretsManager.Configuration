@@ -1,10 +1,57 @@
+using Amazon.SecretsManager;
+using Microsoft.Extensions.Logging;
+
 namespace RF.AWSSecretsManager.Configuration;
 
 /// <summary>
 /// Options controlling how AWS Secrets Manager configuration is loaded and logged.
 /// </summary>
+/// <remarks>
+/// <see cref="SecretName"/>, <see cref="Client"/>, <see cref="Logger"/>, <see cref="LoggerFactory"/> and
+/// <see cref="LoggerCategoryName"/> are read only by the <c>AddAWSSecretsManager</c> extension methods, which use
+/// them to build the configuration source. A source created directly through the
+/// <see cref="AWSSecretsManagerConfigurationSource"/> constructor takes those values from its constructor
+/// arguments and ignores these five properties. When no client is supplied, <see cref="Client"/> stays
+/// <c>null</c>; the client that was created is available from
+/// <see cref="AWSSecretsManagerConfigurationSource.SecretsManagerClient"/>.
+/// </remarks>
 public sealed class AWSSecretsManagerOptions
 {
+    /// <summary>
+    /// Gets or sets the name (or ARN) of the secret to load. Required.
+    /// </summary>
+    /// <remarks>
+    /// Overloads of <c>AddAWSSecretsManager</c> that take a <c>secretName</c> parameter set this for you. The
+    /// configure delegate runs after the parameters are applied, so a value it sets here replaces the parameter.
+    /// </remarks>
+    public string? SecretName { get; set; }
+
+    /// <summary>
+    /// Gets or sets the AWS Secrets Manager client to use.
+    /// </summary>
+    /// <remarks>
+    /// When <c>null</c>, a client is created with the default AWS SDK configuration and is disposed together
+    /// with the configuration provider. A client you supply is never disposed by the provider.
+    /// </remarks>
+    public IAmazonSecretsManager? Client { get; set; }
+
+    /// <summary>
+    /// Gets or sets the logger to use. When <c>null</c>, <see cref="LoggerFactory"/> is used if set; otherwise
+    /// logging is disabled.
+    /// </summary>
+    public ILogger? Logger { get; set; }
+
+    /// <summary>
+    /// Gets or sets the logger factory used to create a logger when <see cref="Logger"/> is <c>null</c>.
+    /// </summary>
+    public ILoggerFactory? LoggerFactory { get; set; }
+
+    /// <summary>
+    /// Gets or sets the category name used when a logger is created from <see cref="LoggerFactory"/>.
+    /// When <c>null</c> or whitespace, <see cref="AWSSecretsManagerLoggerCategory.DefaultCategoryName"/> is used.
+    /// </summary>
+    public string? LoggerCategoryName { get; set; }
+
     /// <summary>
     /// Gets or sets a value indicating whether the secret name should be masked in logs.
     /// </summary>

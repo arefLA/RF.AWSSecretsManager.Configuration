@@ -18,8 +18,9 @@ public sealed class AWSSecretsManagerConfigurationSource : IConfigurationSource
     /// <param name="logger">The logger to use, or <c>null</c> to disable logging.</param>
     /// <param name="delayStrategy">The delay strategy used for retry backoff.</param>
     /// <param name="disposeClient">
-    /// If <c>true</c>, the provider will dispose the supplied client when it is disposed. The default extensions
-    /// currently do not dispose the client to match typical AWS SDK usage patterns.
+    /// If <c>true</c>, the provider will dispose the supplied client when it is disposed. The
+    /// <c>AddAWSSecretsManager</c> extension methods pass <c>true</c> only for a client they created themselves;
+    /// a client supplied by the caller is never disposed by the provider.
     /// </param>
     public AWSSecretsManagerConfigurationSource(
         string secretName,

@@ -2,21 +2,28 @@
 
 **RF.AWSSecretsManager.Configuration** is a small, production-ready NuGet package that adds **AWS Secrets Manager** as an `IConfiguration` source for .NET applications.
 
-It allows you to load a JSON secret from AWS Secrets Manager and expose it as standard configuration key/value pairs, including flattened nested objects.
+It loads a secret from AWS Secrets Manager and exposes it as standard configuration key/value pairs. The secret can be a JSON object (nested objects are flattened) or a single plaintext value such as a password or an API key.
 
 ### Install
 
 Using the .NET CLI:
 
 ```bash
-dotnet add package RF.AWSSecretsManager.Configuration --version 1.1.0
+dotnet add package RF.AWSSecretsManager.Configuration --version 1.2.0
 ```
 
 **Supported target frameworks:** `net8.0` and `net10.0`.
 
-### Secret JSON Format
+### Secret Formats
 
-The package expects the AWS Secrets Manager secret to be stored as **JSON text**. Examples:
+A secret can be stored in two ways. The package looks at the first character of the secret text to decide which one it is:
+
+- It starts with `{` or `[` → it is read as **JSON**.
+- Anything else → it is read as a single **plaintext** value.
+
+#### JSON secrets
+
+This is what the AWS console produces in its "Key/value" editor:
 
 ```json
 {
@@ -44,11 +51,54 @@ Becomes configuration keys:
 
 > **Note:** V1 intentionally **ignores JSON arrays**. They do not produce configuration keys and do not cause errors. See the roadmap below.
 >
-> Secret JSON is parsed with **System.Text.Json** only; there is no dependency on Newtonsoft.Json.
+> Secret JSON is parsed with **System.Text.Json** only; there is no dependency on Newtonsoft.Json. JSON nested deeper than 64 levels is rejected.
+
+#### Plaintext secrets
+
+A secret that holds a single value (the AWS console's "Plaintext" editor, a database password, an API key) is loaded as **one configuration key**. The value is stored exactly as it is in AWS, with nothing trimmed or changed.
+
+The key is the last part of the secret name, after the last `/`:
+
+| Secret name | Secret text | You read it with |
+|---|---|---|
+| `prod/myapp/db-password` | `hunter2` | `configuration["db-password"]` |
+| `ApiKey` | `abc123` | `configuration["ApiKey"]` |
+
+Because only the last part is used, the same code works for `dev/myapp/db-password` and `prod/myapp/db-password`.
+
+To choose the key yourself, set `PlaintextKey`. It can be a hierarchical key:
+
+```csharp
+var configuration = new ConfigurationBuilder()
+    .AddAWSSecretsManager(options =>
+    {
+        options.SecretName = "prod/myapp/db-password";
+        options.PlaintextKey = "ConnectionStrings:Default";
+    })
+    .Build();
+
+var connectionString = configuration.GetConnectionString("Default");
+```
+
+Set `PlaintextKey` as well when you load two plaintext secrets whose names end in the same word (for example `a/password` and `b/password`); otherwise both use the key `password` and the one added later wins.
+
+> **Important: a value that starts with `{` or `[` is always read as JSON, even when `PlaintextKey` is set.**
+>
+> - If such a value is not valid JSON, startup fails with "does not contain valid JSON".
+> - If it happens to be valid JSON (for example `[1]` or `{}`), it loads **no keys**.
+>
+> This matters most for **rotated passwords**: a generated password can begin with `{` or `[`, so a rotation can break startup. To avoid it, exclude those characters when the password is generated (the `ExcludeCharacters` setting of `GetRandomPassword`), or store the password inside a JSON object, for example `{ "Password": "..." }`.
+
+Other things to know about plaintext secrets:
+
+- **A trailing line break is kept.** A secret created with `--secret-string file://secret.txt` usually ends in a newline, and that newline becomes part of the value. A warning is logged for a single-line value that ends in a line break.
+- **Text that is not JSON no longer fails startup.** Up to 1.1.0, a secret that was not valid JSON stopped the app at startup. Now, unless it starts with `{` or `[`, it loads as one plaintext value. A warning is logged when a plaintext value looks like JSON with something in front of it or wrapped around it (for example extra quotes added by a shell).
+- **Byte-order mark.** A JSON secret saved as "UTF-8 with BOM" still fails startup; the error message names the byte-order mark. A plaintext secret keeps the mark as part of the value, and a warning is logged.
+- A secret that is empty or contains only whitespace fails startup. Binary secrets are not supported.
 
 ### Usage
 
-#### 1. Default AWS client (recommended for most apps)
+#### 1. Quick start
 
 This uses the default AWS SDK credential and region resolution (environment variables, shared credentials file, IAM role, etc.).
 
@@ -74,7 +124,37 @@ builder.Configuration
     .AddAWSSecretsManager("my/secret/name");
 ```
 
-#### 2. Custom `IAmazonSecretsManager` client
+#### 2. All settings in one place (recommended)
+
+Every setting is a property of `AWSSecretsManagerOptions`. Pass one delegate and set what you need:
+
+```csharp
+using Microsoft.Extensions.Configuration;
+using RF.AWSSecretsManager.Configuration;
+
+var configuration = new ConfigurationBuilder()
+    .AddAWSSecretsManager(options =>
+    {
+        options.SecretName = "my/secret/name";   // required
+        options.MaskSecretNameInLogs = true;
+        options.LoggerFactory = loggerFactory;   // optional
+    })
+    .Build();
+```
+
+| Option | What it does |
+|---|---|
+| `SecretName` | Name or ARN of the secret. Required. |
+| `Client` | Your own `IAmazonSecretsManager`. When not set, the package creates default clients. |
+| `Logger` | An `ILogger` to log to. |
+| `LoggerFactory` | Used to create a logger when `Logger` is not set. |
+| `LoggerCategoryName` | Category for that logger. Default: `RF.AWSSecretsManager.Configuration`. |
+| `MaskSecretNameInLogs` | Hide most of the secret name in logs. Default: `false`. |
+| `PlaintextKey` | Key for a plaintext secret. Default: the last part of the secret name. |
+
+The other overloads shown below are shortcuts that set the same options from their parameters. When an overload also takes a `configure` delegate, the delegate runs last, so a value it sets replaces the matching parameter.
+
+#### 3. Custom `IAmazonSecretsManager` client
 
 If you want full control over credentials, region, HTTP pipeline, or to reuse an existing client:
 
@@ -91,7 +171,9 @@ var configuration = new ConfigurationBuilder()
     .Build();
 ```
 
-The provider will **not dispose** the client in this case.
+The provider will **not dispose** the client in this case. The same client is used every time the configuration is built.
+
+When you do not pass a client, the package creates default clients itself: one for each load of the secret, disposed as soon as that load ends. You can build the configuration more than once without any extra setup.
 
 **Using a specific region or AWSOptions (e.g. ASP.NET Core)**  
 This package does not take `AWSOptions` directly (to avoid an extra dependency). Build an `IAmazonSecretsManager` yourself and pass it to the custom-client overload. The package targets `net8.0` and `net10.0`, so it can be consumed by any .NET 8 or later application.
@@ -131,7 +213,7 @@ var config = new ConfigurationBuilder()
 
 Credentials always use the default AWS SDK chain (environment variables, shared credentials file, IAM role, etc.). In ASP.NET Core with DI, register `IAmazonSecretsManager` (e.g. create the client from your config as above and register it as a singleton) and pass the resolved client into `AddAWSSecretsManager`. A future version may add an overload that accepts `AWSOptions` and creates the client inside the package (see Roadmap).
 
-#### 3. Logger overload
+#### 4. Logger overload
 
 You can pass an `ILogger` to receive information and error logs (secret values are never logged):
 
@@ -149,7 +231,7 @@ var configuration = new ConfigurationBuilder()
     .Build();
 ```
 
-#### 4. Masking secret name in logs
+#### 5. Masking secret name in logs
 
 To prevent the raw secret name from appearing in logs, enable masking via `AWSSecretsManagerOptions`:
 
@@ -192,7 +274,9 @@ var configuration = new ConfigurationBuilder()
 
 > **Important:** Secret **values are never logged**, regardless of masking settings. Only the secret name (masked or unmasked) and error details are logged.
 
-#### 5. Logging with ILoggerFactory (DI-friendly)
+With masking enabled, AWS error details in the log are reduced to the error type, the AWS error code, the HTTP status and the request id, because full AWS error messages can contain the secret name. Masking applies to **logs only**: an exception that reaches your own code (for example the startup error) is not changed and may still name the secret.
+
+#### 6. Logging with ILoggerFactory (DI-friendly)
 
 When you have an `ILoggerFactory` (e.g. from the host or `IServiceProvider`), use the overload that accepts it and an optional category name. This fits well with dependency injection and ensures log messages use a consistent category.
 
@@ -216,7 +300,7 @@ var configuration = new ConfigurationBuilder()
     .Build();
 ```
 
-#### 6. Dependency injection (Generic Host / WebApplicationBuilder)
+#### 7. Dependency injection (Generic Host / WebApplicationBuilder)
 
 You can wire AWS Secrets Manager configuration so that the **client** and/or **logger** come from the service provider. Build configuration in two steps: first add sources that don’t need DI (e.g. JSON files), then add the secret source using services.
 
@@ -239,13 +323,14 @@ var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
 var configuration = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: true)
-    .AddAWSSecretsManager(
-        "my/secret/name",
-        client: serviceProvider.GetService<IAmazonSecretsManager>(),  // null = use default client
-        configure: options => options.MaskSecretNameInLogs = true,
-        logger: null,
-        loggerFactory: loggerFactory,
-        loggerCategoryName: "MyApp.AwsSecrets")
+    .AddAWSSecretsManager(options =>
+    {
+        options.SecretName = "my/secret/name";
+        options.Client = serviceProvider.GetService<IAmazonSecretsManager>();  // null = use default clients
+        options.MaskSecretNameInLogs = true;
+        options.LoggerFactory = loggerFactory;
+        options.LoggerCategoryName = "MyApp.AwsSecrets";
+    })
     .Build();
 ```
 
@@ -298,13 +383,19 @@ Adjust the resource ARN to your own secret:
 
 - Loads once at startup; **no polling or auto-refresh**.
 - Uses the **default AWS SDK credential chain** by default, or a custom `IAmazonSecretsManager` client when provided.
-- Secret is required:
-  - `ResourceNotFoundException` → throws `InvalidOperationException` and fails startup.
-  - Invalid JSON → throws `InvalidOperationException` and fails startup.
+- Secret is required. Each of these throws `InvalidOperationException` and fails startup:
+  - The secret does not exist (`ResourceNotFoundException`).
+  - The secret is empty, contains only whitespace, or is a binary secret.
+  - The secret starts with `{` or `[` but is not valid JSON. The message gives the line and byte position of the problem. It never includes any part of the secret.
+  - `PlaintextKey` has an empty `:` segment (for example `A::B`).
+- A secret that starts with `{` or `[` is read as JSON; anything else is loaded as **one plaintext key** (see [Secret Formats](#secret-formats)).
 - Arrays in the JSON are **ignored**, not projected into configuration keys.
 - Keys are loaded **as-is**, with no prefixing.
 - Transient AWS errors (throttling, timeouts, 5xx, `InternalServiceErrorException`) are retried with **exponential backoff**:
   - `MaxRetries = 3`, `BaseDelayMs = 1000` → delays of 1000 ms, 2000 ms between attempts.
+  - Each failed attempt is logged as a warning, and an error is logged when all attempts have failed.
+- Other AWS errors (for example access denied) are logged and rethrown as they are.
+- Secret values are never logged.
 
 ### Sample App
 
@@ -312,9 +403,9 @@ A minimal console sample is provided in `sample/RF.AWSSecretsManager.Configurati
 
 It:
 
-- Uses `ConfigurationBuilder` with `AddAWSSecretsManager`.
-- Demonstrates enabling secret name masking.
-- Only calls AWS when the `AWS_SAMPLE_SECRET_NAME` environment variable is set, so `dotnet run` works locally without AWS.
+- Uses `ConfigurationBuilder` with the options overload of `AddAWSSecretsManager`.
+- Demonstrates enabling secret name masking and logging through an `ILoggerFactory`.
+- Reads the secret name from `appsettings.json` (`AWSSecretsManager:SecretName`) or, if that is empty, from the `AWS_SAMPLE_SECRET_NAME` environment variable. It needs a real secret name, an AWS region and credentials to run; with no secret name set it prints usage instructions instead.
 
 ### Roadmap
 

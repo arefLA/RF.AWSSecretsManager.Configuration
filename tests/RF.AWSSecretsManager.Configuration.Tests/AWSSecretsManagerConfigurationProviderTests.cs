@@ -356,8 +356,12 @@ internal sealed class RecordingDelayStrategy : IDelayStrategy
 internal sealed class TestLogger : ILogger
 {
     private readonly List<string> _messages = new();
+    private readonly List<(LogLevel Level, string Message)> _entries = new();
 
     public IReadOnlyList<string> Messages => _messages;
+
+    /// <summary>Every log entry with its level, in order. <see cref="Messages"/> holds the same texts.</summary>
+    public IReadOnlyList<(LogLevel Level, string Message)> Entries => _entries;
 
     public IDisposable BeginScope<TState>(TState state) => NullScope.Instance;
 
@@ -378,6 +382,7 @@ internal sealed class TestLogger : ILogger
         }
 
         _messages.Add(message);
+        _entries.Add((logLevel, message));
     }
 
     private sealed class NullScope : IDisposable

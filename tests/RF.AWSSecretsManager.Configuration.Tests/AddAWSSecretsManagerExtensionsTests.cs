@@ -1,5 +1,4 @@
 using Amazon.SecretsManager;
-using Amazon.SecretsManager.Model;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -459,45 +458,40 @@ public sealed class AddAWSSecretsManagerDefaultClientTests : IDisposable
         source.Options.PlaintextKey.Should().Be("ApiKey");
     }
 
-    [Fact]
-    public async Task Null_client_argument_creates_a_default_client_that_is_disposed_with_the_provider()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Package_owns_the_default_clients_and_gives_each_load_a_new_one(bool explicitNullClient)
     {
-        // Arrange
+        // Arrange (BUG-03): the real extension wiring with the real client type. Nothing is loaded, so AWS is
+        // not called; what a load does with its client is covered with fake clients in SharedClientDisposalTests.
         var builder = new ConfigurationBuilder();
+        if (explicitNullClient)
+        {
+            builder.AddAWSSecretsManager("my/secret", (IAmazonSecretsManager?)null);
+        }
+        else
+        {
+            builder.AddAWSSecretsManager("my/secret");
+        }
 
-        // Act
-        builder.AddAWSSecretsManager("my/secret", (IAmazonSecretsManager?)null);
         var source = SingleSource(builder);
-        ((IDisposable)source.Build(builder)).Dispose();
+        var registrationClient = source.SecretsManagerClient;
 
-        // Assert: a disposed AWS client refuses the call before any network activity.
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        Func<Task> useClient = () => source.SecretsManagerClient.GetSecretValueAsync(
-            new GetSecretValueRequest { SecretId = "my/secret" },
-            timeout.Token);
+        // Assert: the extension chose "package owns the clients", not one shared client.
+        source.OwnsClients.Should().BeTrue();
+        source.DisposeClient.Should().BeFalse();
 
-        await useClient.Should().ThrowAsync<ObjectDisposedException>();
-    }
+        // Act: what two loads would receive.
+        using var firstLoadClient = source.TakeClientForLoad();
+        using var secondLoadClient = source.TakeClientForLoad();
 
-    [Fact]
-    public async Task Client_created_by_the_package_is_disposed_with_the_provider()
-    {
-        // Arrange
-        var builder = new ConfigurationBuilder();
-        builder.AddAWSSecretsManager("my/secret");
-        var source = SingleSource(builder);
-        var provider = source.Build(builder);
-
-        // Act
-        ((IDisposable)provider).Dispose();
-
-        // Assert: a disposed AWS client refuses the call before any network activity.
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        Func<Task> useClient = () => source.SecretsManagerClient.GetSecretValueAsync(
-            new GetSecretValueRequest { SecretId = "my/secret" },
-            timeout.Token);
-
-        await useClient.Should().ThrowAsync<ObjectDisposedException>();
+        // Assert: two fresh default clients, neither of them the one exposed on the source.
+        firstLoadClient.Should().BeOfType<AmazonSecretsManagerClient>().And.NotBeSameAs(registrationClient);
+        secondLoadClient.Should().BeOfType<AmazonSecretsManagerClient>()
+            .And.NotBeSameAs(registrationClient)
+            .And.NotBeSameAs(firstLoadClient);
+        source.SecretsManagerClient.Should().BeSameAs(registrationClient);
     }
 
     [Fact]

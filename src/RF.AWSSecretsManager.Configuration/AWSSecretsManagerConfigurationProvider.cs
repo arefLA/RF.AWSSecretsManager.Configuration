@@ -45,7 +45,19 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
     private const string NoErrorCode = "none";
 
     private readonly string _secretName;
-    private readonly IAmazonSecretsManager _client;
+
+    /// <summary>
+    /// The client supplied from outside, used for every load. <c>null</c> when the package owns the clients
+    /// (then <see cref="_takeClientForLoad"/> is set).
+    /// </summary>
+    private readonly IAmazonSecretsManager? _suppliedClient;
+
+    /// <summary>
+    /// When the package owns the clients: gets the client for one load from the source. <c>null</c> when the
+    /// client was supplied.
+    /// </summary>
+    private readonly Func<IAmazonSecretsManager>? _takeClientForLoad;
+
     private readonly AWSSecretsManagerOptions _options;
     private readonly ILogger? _logger;
     private readonly IDelayStrategy _delayStrategy;
@@ -54,19 +66,99 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
     /// <summary>
     /// Initializes a new instance of the <see cref="AWSSecretsManagerConfigurationProvider"/> class.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When the source holds a client supplied from outside, the provider uses that client for every load and,
+    /// if the source says so, disposes it with the provider.
+    /// </para>
+    /// <para>
+    /// When the <c>AddAWSSecretsManager</c> extension methods created the client (the package owns the
+    /// clients), the provider keeps no client at all: each load gets a new one from the source and disposes it
+    /// when the load ends, whether it succeeded or failed. This package reads a secret once per load and keeps
+    /// no connection, so nothing has to outlive the load. No load client is left behind when a load fails, when
+    /// a provider is dropped without being disposed (as <c>ConfigurationBuilder.Build()</c> does with its other
+    /// providers when one fails to load), or when a provider is loaded again; and providers never share a
+    /// client, however they were created. The only client that is not disposed is the one the source creates
+    /// at registration and exposes as
+    /// <see cref="AWSSecretsManagerConfigurationSource.SecretsManagerClient"/>; loads do not use it.
+    /// </para>
+    /// </remarks>
     /// <param name="source">The configuration source.</param>
     public AWSSecretsManagerConfigurationProvider(AWSSecretsManagerConfigurationSource source)
     {
         _secretName = source.SecretName;
-        _client = source.SecretsManagerClient;
         _options = source.Options;
         _logger = source.Logger;
         _delayStrategy = source.DelayStrategy;
-        _disposeClient = source.DisposeClient;
+
+        if (source.OwnsClients)
+        {
+            _takeClientForLoad = source.TakeClientForLoad;
+        }
+        else
+        {
+            _suppliedClient = source.SecretsManagerClient;
+            _disposeClient = source.DisposeClient;
+        }
     }
 
     /// <inheritdoc />
     public override void Load()
+    {
+        if (_takeClientForLoad is null)
+        {
+            LoadCore(_suppliedClient!);
+            return;
+        }
+
+        // Package-owned client: created for this load only, so concurrent loads never share one.
+        IAmazonSecretsManager client;
+        try
+        {
+            client = _takeClientForLoad();
+        }
+        catch (Exception ex)
+        {
+            // Reached when a client can no longer be created, for example because the AWS region setting was
+            // removed after registration. Logged like the other load errors: with masking on, the exception
+            // itself is left out and only its type is named.
+            _logger?.LogError(
+                LoggableException(ex),
+                "Failed to create an AWS Secrets Manager client to load secret '{SecretName}' ({ExceptionType}).",
+                _options.GetMaskedSecretName(_secretName),
+                ex.GetType().Name);
+
+            throw;
+        }
+
+        try
+        {
+            LoadCore(client);
+        }
+        finally
+        {
+            try
+            {
+                client.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // Releasing the client must change the outcome of the load in neither direction: a load that
+                // succeeded stays successful, and a load error is not replaced by a cleanup error.
+                //
+                // The exception is always passed to the logger, even with masking on. It is swallowed here, so
+                // the log is the only place its message and stack trace can be seen, and it comes from
+                // releasing a client, not from an AWS response, so it cannot name the secret.
+                _logger?.LogWarning(
+                    ex,
+                    "Failed to dispose the AWS Secrets Manager client used to load secret '{SecretName}' ({ExceptionType}).",
+                    _options.GetMaskedSecretName(_secretName),
+                    ex.GetType().Name);
+            }
+        }
+    }
+
+    private void LoadCore(IAmazonSecretsManager client)
     {
         var plaintextKey = NormalizePlaintextKey();
 
@@ -75,7 +167,7 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
             SecretId = _secretName
         };
 
-        var response = GetSecretValueWithRetry(request);
+        var response = GetSecretValueWithRetry(client, request);
         var secretValue = response?.SecretString;
 
         if (string.IsNullOrEmpty(secretValue))
@@ -498,7 +590,7 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
         return description;
     }
 
-    private GetSecretValueResponse? GetSecretValueWithRetry(GetSecretValueRequest request)
+    private GetSecretValueResponse? GetSecretValueWithRetry(IAmazonSecretsManager client, GetSecretValueRequest request)
     {
         AmazonServiceException? lastServiceException = null;
 
@@ -506,7 +598,7 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
         {
             try
             {
-                var response = _client
+                var response = client
                     .GetSecretValueAsync(request, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
@@ -607,9 +699,10 @@ public sealed class AWSSecretsManagerConfigurationProvider : ConfigurationProvid
     /// <inheritdoc />
     public void Dispose()
     {
+        // With package-owned clients there is nothing to do: every client is disposed when its load ends.
         if (_disposeClient)
         {
-            _client.Dispose();
+            _suppliedClient!.Dispose();
         }
     }
 }

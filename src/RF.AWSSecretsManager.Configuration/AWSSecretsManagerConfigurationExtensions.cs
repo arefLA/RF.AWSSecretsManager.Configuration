@@ -130,8 +130,8 @@ public static class AWSSecretsManagerConfigurationExtensions
     /// <param name="builder">The configuration builder.</param>
     /// <param name="secretName">The name of the secret.</param>
     /// <param name="client">
-    /// The AWS Secrets Manager client to use. It is not disposed by the provider. When <c>null</c>, a default
-    /// client is created (and disposed with the provider).
+    /// The AWS Secrets Manager client to use. It is not disposed by the provider. When <c>null</c>, default
+    /// clients are created by the package, one per load, and disposed when the load ends.
     /// </param>
     /// <returns>The same <see cref="IConfigurationBuilder"/> instance.</returns>
     public static IConfigurationBuilder AddAWSSecretsManager(
@@ -148,8 +148,8 @@ public static class AWSSecretsManagerConfigurationExtensions
     /// <param name="builder">The configuration builder.</param>
     /// <param name="secretName">The name of the secret.</param>
     /// <param name="client">
-    /// The AWS Secrets Manager client to use. It is not disposed by the provider. When <c>null</c>, a default
-    /// client is created (and disposed with the provider).
+    /// The AWS Secrets Manager client to use. It is not disposed by the provider. When <c>null</c>, default
+    /// clients are created by the package, one per load, and disposed when the load ends.
     /// </param>
     /// <param name="logger">The logger to use, or <c>null</c> to disable logging.</param>
     /// <returns>The same <see cref="IConfigurationBuilder"/> instance.</returns>
@@ -196,7 +196,7 @@ public static class AWSSecretsManagerConfigurationExtensions
     /// </remarks>
     /// <param name="builder">The configuration builder.</param>
     /// <param name="secretName">The name of the secret.</param>
-    /// <param name="client">The AWS Secrets Manager client to use. When <c>null</c>, a default client is created.</param>
+    /// <param name="client">The AWS Secrets Manager client to use. When <c>null</c>, default clients are created by the package, one per load, and disposed when the load ends.</param>
     /// <param name="configure">Delegate used to configure <see cref="AWSSecretsManagerOptions"/>.</param>
     /// <param name="logger">The logger to use, or <c>null</c> to disable logging (or use <paramref name="loggerFactory"/> when provided).</param>
     /// <param name="loggerFactory">Optional logger factory; when provided and <paramref name="logger"/> is <c>null</c>, a logger is created using <paramref name="loggerCategoryName"/>.</param>
@@ -257,17 +257,26 @@ public static class AWSSecretsManagerConfigurationExtensions
 
         var logger = options.Logger ?? options.LoggerFactory?.CreateLogger(categoryName);
 
-        // A client the caller supplied stays the caller's to dispose; one created here is disposed with the provider.
-        var clientWasProvided = options.Client is not null;
-        var client = options.Client ?? new AmazonSecretsManagerClient();
+        var delayStrategy = new ThreadSleepDelayStrategy();
 
-        builder.Add(new AWSSecretsManagerConfigurationSource(
-            options.SecretName,
-            client,
-            options,
-            logger,
-            new ThreadSleepDelayStrategy(),
-            disposeClient: !clientWasProvided));
+        // A client the caller supplied is shared by every provider and stays the caller's to dispose. Otherwise
+        // the package owns the clients: every load uses its own and disposes it when the load ends.
+        var source = options.Client is { } providedClient
+            ? new AWSSecretsManagerConfigurationSource(
+                options.SecretName,
+                providedClient,
+                options,
+                logger,
+                delayStrategy,
+                disposeClient: false)
+            : new AWSSecretsManagerConfigurationSource(
+                options.SecretName,
+                static () => new AmazonSecretsManagerClient(),
+                options,
+                logger,
+                delayStrategy);
+
+        builder.Add(source);
 
         return builder;
     }

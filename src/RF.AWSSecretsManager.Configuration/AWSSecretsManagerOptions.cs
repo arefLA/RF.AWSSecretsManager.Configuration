@@ -7,13 +7,21 @@ namespace RF.AWSSecretsManager.Configuration;
 /// Options controlling how AWS Secrets Manager configuration is loaded and logged.
 /// </summary>
 /// <remarks>
+/// <para>
 /// <see cref="SecretName"/>, <see cref="Client"/>, <see cref="Logger"/>, <see cref="LoggerFactory"/> and
 /// <see cref="LoggerCategoryName"/> are read only by the <c>AddAWSSecretsManager</c> extension methods, which use
 /// them to build the configuration source. A source created directly through the
 /// <see cref="AWSSecretsManagerConfigurationSource"/> constructor takes those values from its constructor
-/// arguments and ignores these five properties. When no client is supplied, <see cref="Client"/> stays
-/// <c>null</c>; the client that was created is available from
-/// <see cref="AWSSecretsManagerConfigurationSource.SecretsManagerClient"/>.
+/// arguments and ignores these five properties.
+/// </para>
+/// <para>
+/// When no client is supplied, <see cref="Client"/> stays <c>null</c> and the package creates its own clients:
+/// each load of the secret uses one and disposes it when the load ends. One more client is created at
+/// registration, so that a missing region or missing credentials fail early; it is available from
+/// <see cref="AWSSecretsManagerConfigurationSource.SecretsManagerClient"/>, is not used for loading and is
+/// never disposed by the package. If your code needs a client as well, prefer to create one yourself and set
+/// <see cref="Client"/>; a supplied client is used for every load and is never disposed by this package.
+/// </para>
 /// </remarks>
 public sealed class AWSSecretsManagerOptions
 {
@@ -30,8 +38,9 @@ public sealed class AWSSecretsManagerOptions
     /// Gets or sets the AWS Secrets Manager client to use.
     /// </summary>
     /// <remarks>
-    /// When <c>null</c>, a client is created with the default AWS SDK configuration and is disposed together
-    /// with the configuration provider. A client you supply is never disposed by the provider.
+    /// When <c>null</c>, clients are created with the default AWS SDK configuration. Each load of the secret
+    /// uses one client and disposes it when the load ends. A client you supply is used for every load and is
+    /// never disposed by this package.
     /// </remarks>
     public IAmazonSecretsManager? Client { get; set; }
 

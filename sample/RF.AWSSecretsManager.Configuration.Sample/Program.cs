@@ -36,6 +36,10 @@ if (string.IsNullOrWhiteSpace(secretName))
     Console.WriteLine("  },");
     Console.WriteLine("  \"MySetting\": \"Some value\"");
     Console.WriteLine("}");
+    Console.WriteLine();
+    Console.WriteLine("A plaintext secret (a single value, not JSON) works too. It is loaded");
+    Console.WriteLine("under one key: the last part of the secret name, e.g. the secret");
+    Console.WriteLine("\"my/secret/name\" is read with configuration[\"name\"].");
     return;
 }
 
@@ -69,6 +73,8 @@ var configuration = configurationBuilder.Build();
 
 // Read a value from configuration. If your secret JSON contains a value like:
 // { "MySetting": "Some value" } then this will print "Some value".
+// (A plaintext secret has a single key instead: the last part of the secret name,
+// or the key you set with options.PlaintextKey.)
 var mySetting = configuration["MySetting"] ?? "(null)";
 
 logger.LogInformation("MySetting from configuration: {Value}", mySetting);
